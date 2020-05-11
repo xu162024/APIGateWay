@@ -1,0 +1,312 @@
+Spring Cloud Zuul类似Facade的模式,它的存在就像是整个微服务架构系统的门面一样,所有的外部客户端访问都需要经过它来调度和过滤,它主要的功能是路由和过滤功能。
+
+一构建网关，
+
+1 创建api-gateway的工程，pom.xml,引入spring-cloud-starter-zuul依赖
+
+<dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        
+                 
+     <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-eureka-server</artifactId>
+    </dependency>
+        
+     <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-zuul</artifactId>
+    </dependency>
+   </dependencies>
+    
+                 
+      <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>Brixton.SR5</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+ 
+
+2 创建应用主类,使用@EnableZuulProxy 注解开启Zuul的API网关服务功能。
+
+ 
+
+@EnableZuulProxy
+@SpringBootApplication
+public class ApiGatewayApplication {
+
+    public static void main(String[] args) {
+ 
+        SpringApplication.run(ApiGatewayApplication.class, args);
+    }
+
+}
+
+ 
+
+3 application.yml 文件
+
+server:
+  port: 5555
+
+spring:
+  application:
+    name: api-gateway
+
+ 3.1 传统路由方式,application.yml 文件配置,所有符合/api-a-url/**规则的访问都将被路由转发到http://localhost:8082/地址上,也就是说当访问 http://localhost:5555/api-a-url/hello的时候,API网关服务会将该请求路由到http://localhost:8082/hello提供的接口上。
+
+zuul:
+     routes:
+            api-url: 
+                   path: /api-a-url/**
+                   url: http://localhost:8082/
+
+ 
+
+4   启动Eureka注册中心
+
+5   启动hello的服务
+
+6   启动网关服务,访问http://localhost:5555/api-a-url/hello,结果如下图
+
+
+
+7 这种传统的方式路由很不友好,需要花大量时间维护path和url之间的关系,Zuul实现了与Eureka的无缝整合,可以不映射具体的url,而是映射到某个具体的服务,具体的url交给Eureka去维护,serviceId的值是服务的应用名称,pom添加
+
+ <dependency>
+      <groupId>org.springframework.cloud</groupId>
+      <artifactId>spring-cloud-starter-eureka</artifactId>
+    </dependency>
+
+在application.yml 文件
+
+server:
+  port: 5555
+
+spring:
+  application:
+    name: api-gateway
+zuul:
+  routes:
+    api-a:
+      path: /api-a/**
+      serviceId: service-ribbon
+    api-b:
+      path: /api-b/**
+      serviceId: service-feign
+eureka:
+  client:
+  
+      serviceUrl: 
+                defaultZone: http://peer1:1111/eureka/,http://peer2:2222/eureka/
+
+启动网关,再次访问http://localhost:5555/api-b-url/hello 结果如下图:
+
+
+
+二 综上网关的路由有两种，一种是传统的路由方式,一种是面向服务的路由
+
+1 传统路由:不依赖服务发现的机制情况下,通过配置文件制定每个路由表达式与服务实例的映射关系来实现网关对外部请求的路由
+
+单实例配置:
+
+zuul:
+       routes:
+            api-url: 
+                   path:  /api-a-url/**
+                   url: http://localhost:8082/
+
+ 
+
+多实例配置:
+
+zuul:
+   
+     
+     routes:
+            api-url: 
+                   path:  /api-b-url/**
+                   serviceId: hello-service
+ribbon.eureka.enabled: false
+hello-service:
+               ribbon:
+                     listOfServers: http://localhost:8082,http://localhost:8088
+
+ 
+
+多次访问,可以看到控制台分别打印出调用8082和8088的服务的信息,说明网关转发路由请求是有负载均衡的,注意ribbon.eureka.enabled: false一定要是false,否则会去从Eureka之类的服务治理框架中中寻找服务,会找不到该实例。
+
+
+
+
+
+ 
+
+2 面向服务的路由:不需要我们自己去维护映射关系,由服务治理框架去自动维护映射关系,服务路由默认的规则是path会使用serviceId配置的服务名作为前缀,如下图这样，默认情况下所有的Eureka中的每个服务都会被Zuul自动的创建映射关系来进行路由。
+
+zuul:
+   
+     
+     routes:
+            api-url: 
+                   path:  /hello-service/**
+                   serviceId: hello-service
+eureka:
+  client:
+  
+      serviceUrl: 
+                defaultZone: http://peer1:1111/eureka/,http://peer2:2222/eureka/
+
+ 
+
+3 路径匹配
+
+   可以使用ant风格路径表达式，比如/hello-service/**等这些,一共有三种通配符
+
+?  匹配任意单个字符
+
+*  匹配任意数量字符
+
+** 匹配任意数量字符,支持多级目录
+
+当存在多个匹配的路由规则的时候,匹配结果完成取决路由规则的保存顺序,由于properties的配置内容无法保证有序,所以出现这种情况，应该使用yaml文件来配置。
+
+zuul:
+     routes:
+            user-service-ext: 
+                   path:  /user-service/ext/**
+                   serviceId: user-service-ext
+
+             user-service: 
+                   path:  /user-service/**
+                   serviceId: user-service
+
+ 
+
+4 本地跳转
+
+ 通过forward来指定需要跳转的服务器资源路径,在网关项目中新建HelloController的类,并配置yaml文件。
+
+@RestController
+public class HelloController {
+ 
+    @RequestMapping("local/hello")
+      public String  helllo( )   {
+          System.out.println("hello gateway");
+          return  "hello gateway";
+     }
+     
+     
+}
+
+zuul:
+    routes:
+            api-url: 
+                   path:  /api-b-url/**
+                   url: forward:/local
+
+访问http://localhost:5555/api-b-url/hello,结果如下图,跳转到本网关api-gateway的HelloController类的hello方法上。
+
+
+
+5 路由前缀
+
+    zuul.prefix可以为路由规则新增前缀,yaml配置文件如下
+
+zuul:
+    prefix: /api
+
+    routes:
+            api-url: 
+                   path:  /ccc/**
+                   serviceId: hello-service
+
+访问http://localhost:5555/api/ccc/hello,结果如下:
+
+
+
+ 注意如果路由表达式的起始字符和 zuul.prefix的参数相同,则会映射不到地址,如
+
+  routes:
+            api-url: 
+                   path:  /api/a/
+                   serviceId: hello-service
+
+或者
+
+  routes:
+            api-url: 
+                   path:  /api-c/**
+                   serviceId: hello-service
+
+
+
+6 忽略表达式
+
+zuul.ignored-patterns可以忽略表达式,防止hello被路由,可以做如下配置
+
+zuul:
+     ignored-patterns: /**/hello/**
+     
+     routes:
+            api-url: 
+                   path:  /api-b-url/**
+                   serviceId: hello-service
+
+访问 http://localhost:5555/api-b-url/hello     发现找不到匹配的路由,界面返回404，
+
+
+
+但是访问http://localhost:5555/api-b-url/hello2   就可以正常访问
+
+
+
+ 
+
+7 默认情况下,Spring Cloud Zuul在请求路由的时候,会过滤掉http请求头信息的一些敏感信息,防止它们被传递到外部服务器,所以常用的cookie在网关中默认是不会传递的,如果需要传递,可以通过下面两种方法
+
+1 设置全局参数为空来覆盖默认值,并不推荐,破坏了默认的设置的用意
+
+zuul.sensitiveHeaders=
+
+2 指定路由参数来配置
+
+zuul.routs.<router>.sensitiveHeaders=
+
+或者
+
+zuul.routs.<router>.customSensitiveHeaders=true
+
+例子
+
+zuul:
+     routes:
+            api-url: 
+                   path:  /api-b-url/**
+                   serviceId: hello-service
+                   sensitive-headers:
+                   custom-sensitive-headers: true
+
+ 
+
+8 重定向问题
+
+  使用Shiro、Spring Security登录成功后，跳转的页面URL是具体的Web应用实例的地址，而不是通过网关的路由地址。因为使用API网关就是想把网关当作统一入口，从而不暴露所有的内部细节，所以这个问题很严重。导致这个问题的原因是，使用Shiro、Spring Security登录成功后通过重定向的方式跳转到登录后的页面，此时的请求结果状态码为302，请求头信息中的Location指向了具体的服务实例地址，而请求头信息中的Host也指向了具体的服务实例IP地址和端口。所以问题的根本原因在于Spring Cloud Zuul在路由请求时，并没有将最初的Host信息设置正确。解决办法：
+
+zuul.add-host-header=true
